@@ -8,6 +8,76 @@ import torch as th
 import torch.nn as nn
 import tqdm
 
+import torch.nn.functional as F
+from dgl.dataloading import (
+    DataLoader,
+    MultiLayerFullNeighborSampler,
+)
+
+
+class SAGE(nn.Module):
+
+    def __init__(self, in_size, hid_size, out_size, n_layers, activation,
+                 dropout):
+        super().__init__()
+        self.n_layers = n_layers
+        self.layers = nn.ModuleList()
+        self.layers.append(dglnn.SAGEConv(in_size, hid_size, "mean"))
+        for i in range(1, n_layers - 1):
+            self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "mean"))
+        self.layers.append(dglnn.SAGEConv(hid_size, out_size, "mean"))
+        self.dropout = nn.Dropout(dropout)
+        self.hid_size = hid_size
+        self.out_size = out_size
+        self.activation = activation
+
+    def forward(self, blocks, x):
+        h = x
+        for l, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h = layer(block, h)
+            if l != len(self.layers) - 1:
+                h = self.activation(h)
+                h = self.dropout(h)
+        return h
+
+    def inference(self, g, device, batch_size):
+        """Conduct layer-wise inference to get all the node embeddings."""
+        feat = g.ndata["feat"]
+        sampler = MultiLayerFullNeighborSampler(1,
+                                                prefetch_node_feats=["feat"])
+        dataloader = DataLoader(
+            g,
+            th.arange(g.num_nodes()).to(g.device),
+            sampler,
+            device=device,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=0,
+        )
+        buffer_device = th.device("cpu")
+        pin_memory = buffer_device != device
+
+        for l, layer in enumerate(self.layers):
+            y = th.empty(
+                g.num_nodes(),
+                self.hid_size if l != len(self.layers) - 1 else self.out_size,
+                dtype=feat.dtype,
+                device=buffer_device,
+                pin_memory=pin_memory,
+            )
+            feat = feat.to(device)
+            for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
+                x = feat[input_nodes]
+                h = layer(blocks[0], x)  # len(blocks) = 1
+                if l != len(self.layers) - 1:
+                    h = self.activation(h)
+                    h = self.dropout(h)
+                # by design, our output nodes are contiguous
+                y[output_nodes[0]:output_nodes[-1] + 1] = h.to(buffer_device)
+            feat = y
+        return y
+
 
 class DistSAGE(nn.Module):
 

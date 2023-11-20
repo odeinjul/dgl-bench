@@ -9,8 +9,6 @@ import torch.optim as optim
 import dgl
 from models import DistSAGE, compute_acc
 
-import EmbCache
-
 import torch
 
 torch.manual_seed(25)
@@ -101,7 +99,7 @@ def run(args, device, data):
             tic = time.time()
             tic_step = time.time()
             for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 sample_time += time.time() - tic_step
 
                 load_begin = time.time()
@@ -113,24 +111,24 @@ def run(args, device, data):
                 blocks = [block.to(device) for block in blocks]
                 batch_inputs = batch_inputs.to(device)
                 batch_labels = batch_labels.to(device)
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 load_time += time.time() - load_begin
 
                 forward_start = time.time()
                 batch_pred = model(blocks, batch_inputs)
                 loss = loss_fcn(batch_pred, batch_labels)
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 forward_time += time.time() - forward_start
 
                 backward_begin = time.time()
                 optimizer.zero_grad()
                 loss.backward()
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 backward_time += time.time() - backward_begin
 
                 update_start = time.time()
                 optimizer.step()
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 update_time += time.time() - update_start
 
                 step_t = time.time() - tic_step

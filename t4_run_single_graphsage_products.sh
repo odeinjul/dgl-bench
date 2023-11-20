@@ -1,0 +1,1 @@
+python3 graphsage/train_node_classification.py --num_gpus 8 --num_epochs 7 --eval_every 5 --num_hidden 256 --dataset ogbn-products --root ~/workspace/datasets/
