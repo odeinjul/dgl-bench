@@ -77,6 +77,11 @@ def run(rank, world_size, data, args):
 
     iter_tput = []
     epoch_time_log = []
+    sample_time_log = []
+    load_time_log = []
+    forward_time_log = []
+    backward_time_log = []
+    update_time_log = []
     epoch = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
@@ -96,7 +101,7 @@ def run(rank, world_size, data, args):
             tic = time.time()
             tic_step = time.time()
             for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 sample_time += time.time() - tic_step
 
                 load_begin = time.time()
@@ -105,24 +110,24 @@ def run(rank, world_size, data, args):
                 batch_labels = batch_labels.long()
                 num_seeds += len(blocks[-1].dstdata[dgl.NID])
                 num_inputs += len(blocks[0].srcdata[dgl.NID])
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 load_time += time.time() - load_begin
 
                 forward_start = time.time()
                 batch_pred = model(blocks, batch_inputs)
                 loss = loss_fcn(batch_pred, batch_labels)
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 forward_time += time.time() - forward_start
 
                 backward_begin = time.time()
                 optimizer.zero_grad()
                 loss.backward()
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 backward_time += time.time() - backward_begin
 
                 update_start = time.time()
                 optimizer.step()
-                # torch.cuda.synchronize()
+                torch.cuda.synchronize()
                 update_time += time.time() - update_start
 
                 step_t = time.time() - tic_step
@@ -157,9 +162,89 @@ def run(rank, world_size, data, args):
                                  num_inputs,
                              ))
                 print(timetable)
+        sample_time_log.append(sample_time)
+        load_time_log.append(load_time)
+        forward_time_log.append(forward_time)
+        backward_time_log.append(backward_time)
+        update_time_log.append(update_time)
         epoch_time_log.append(toc - tic)
-    print("Rank {}, Avg Epoch Time(s): {:.4f}".format(
-        dist.get_rank(), np.mean(epoch_time_log[2:])))
+
+    avg_epoch_time = np.mean(epoch_time_log[2:])
+    avg_sample_time = np.mean(sample_time_log[2:])
+    avg_load_time = np.mean(load_time_log[2:])
+    avg_forward_time = np.mean(forward_time_log[2:])
+    avg_backward_time = np.mean(backward_time_log[2:])
+    avg_update_time = np.mean(update_time_log[2:])
+
+    for i in range(args.num_gpus):
+        th.distributed.barrier()
+        if i == th.distributed.get_rank() % args.num_gpus:
+            timetable = ("=====================\n"
+                         "Part {}, Avg Time:\n"
+                         "Epoch Time(s): {:.4f}\n"
+                         "Sampling Time(s): {:.4f}\n"
+                         "Loading Time(s): {:.4f}\n"
+                         "Forward Time(s): {:.4f}\n"
+                         "Backward Time(s): {:.4f}\n"
+                         "Update Time(s): {:.4f}\n"
+                         "=====================".format(
+                             th.distributed.get_rank(),
+                             avg_epoch_time,
+                             avg_sample_time,
+                             avg_load_time,
+                             avg_forward_time,
+                             avg_backward_time,
+                             avg_update_time,
+                         ))
+            print(timetable)
+    all_reduce_tensor = torch.tensor([0], device="cuda", dtype=torch.float32)
+
+    all_reduce_tensor[0] = avg_epoch_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_epoch_time = all_reduce_tensor[0].item() / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_sample_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_sample_time = all_reduce_tensor[0].item() / dist.get_world_size(
+    )
+
+    all_reduce_tensor[0] = avg_load_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_load_time = all_reduce_tensor[0].item() / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_forward_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_forward_time = all_reduce_tensor[0].item(
+    ) / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_backward_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_backward_time = all_reduce_tensor[0].item(
+    ) / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_update_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_update_time = all_reduce_tensor[0].item() / dist.get_world_size(
+    )
+
+    if dist.get_rank() == 0:
+        timetable = ("=====================\n"
+                     "All reduce time:\n"
+                     "Epoch Time(s): {:.4f}\n"
+                     "Sampling Time(s): {:.4f}\n"
+                     "Loading Time(s): {:.4f}\n"
+                     "Forward Time(s): {:.4f}\n"
+                     "Backward Time(s): {:.4f}\n"
+                     "Update Time(s): {:.4f}\n"
+                     "=====================".format(
+                         all_reduce_epoch_time,
+                         all_reduce_sample_time,
+                         all_reduce_load_time,
+                         all_reduce_forward_time,
+                         all_reduce_backward_time,
+                         all_reduce_update_time,
+                     ))
+        print(timetable)
 
 
 def main(args):

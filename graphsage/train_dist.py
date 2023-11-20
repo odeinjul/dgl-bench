@@ -6,6 +6,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.distributed as dist
 import dgl
 from models import DistSAGE, compute_acc
 
@@ -80,6 +81,11 @@ def run(args, device, data):
 
     iter_tput = []
     epoch_time_log = []
+    sample_time_log = []
+    load_time_log = []
+    forward_time_log = []
+    backward_time_log = []
+    update_time_log = []
     epoch = 0
     for epoch in range(args.num_epochs):
         tic = time.time()
@@ -180,6 +186,11 @@ def run(args, device, data):
                                  num_inputs,
                              ))
                 print(timetable)
+        sample_time_log.append(sample_time)
+        load_time_log.append(load_time)
+        forward_time_log.append(forward_time)
+        backward_time_log.append(backward_time)
+        update_time_log.append(update_time)
         epoch_time_log.append(toc - tic)
 
         # if epoch % args.eval_every == 0 and epoch != 0:
@@ -197,8 +208,82 @@ def run(args, device, data):
         #     print("Part {}, Val Acc {:.4f}, Test Acc {:.4f}, time: {:.4f}".
         #           format(g.rank(), val_acc, test_acc,
         #                  time.time() - start))
-    print("Rank {}, Avg Epoch Time(s): {:.4f}".format(
-        th.distributed.get_rank(), np.mean(epoch_time_log[2:])))
+    avg_epoch_time = np.mean(epoch_time_log[2:])
+    avg_sample_time = np.mean(sample_time_log[2:])
+    avg_load_time = np.mean(load_time_log[2:])
+    avg_forward_time = np.mean(forward_time_log[2:])
+    avg_backward_time = np.mean(backward_time_log[2:])
+    avg_update_time = np.mean(update_time_log[2:])
+
+    for i in range(args.num_gpus):
+        th.distributed.barrier()
+        if i == th.distributed.get_rank() % args.num_gpus:
+            timetable = ("=====================\n"
+                         "Part {}, Avg Time:\n"
+                         "Epoch Time(s): {:.4f}\n"
+                         "Sampling Time(s): {:.4f}\n"
+                         "Loading Time(s): {:.4f}\n"
+                         "Forward Time(s): {:.4f}\n"
+                         "Backward Time(s): {:.4f}\n"
+                         "Update Time(s): {:.4f}\n"
+                         "=====================".format(
+                             th.distributed.get_rank(),
+                             avg_epoch_time,
+                             avg_sample_time,
+                             avg_load_time,
+                             avg_forward_time,
+                             avg_backward_time,
+                             avg_update_time,
+                         ))
+            print(timetable)
+    all_reduce_tensor = torch.tensor([0], device="cuda", dtype=torch.float32)
+
+    all_reduce_tensor[0] = avg_epoch_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_epoch_time = all_reduce_tensor[0].item() / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_sample_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_sample_time = all_reduce_tensor[0].item() / dist.get_world_size(
+    )
+
+    all_reduce_tensor[0] = avg_load_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_load_time = all_reduce_tensor[0].item() / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_forward_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_forward_time = all_reduce_tensor[0].item(
+    ) / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_backward_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_backward_time = all_reduce_tensor[0].item(
+    ) / dist.get_world_size()
+
+    all_reduce_tensor[0] = avg_update_time
+    dist.all_reduce(all_reduce_tensor, dist.ReduceOp.SUM)
+    all_reduce_update_time = all_reduce_tensor[0].item() / dist.get_world_size(
+    )
+
+    if dist.get_rank() == 0:
+        timetable = ("=====================\n"
+                     "All reduce time:\n"
+                     "Epoch Time(s): {:.4f}\n"
+                     "Sampling Time(s): {:.4f}\n"
+                     "Loading Time(s): {:.4f}\n"
+                     "Forward Time(s): {:.4f}\n"
+                     "Backward Time(s): {:.4f}\n"
+                     "Update Time(s): {:.4f}\n"
+                     "=====================".format(
+                         all_reduce_epoch_time,
+                         all_reduce_sample_time,
+                         all_reduce_load_time,
+                         all_reduce_forward_time,
+                         all_reduce_backward_time,
+                         all_reduce_update_time,
+                     ))
+        print(timetable)
 
 
 def main(args):
