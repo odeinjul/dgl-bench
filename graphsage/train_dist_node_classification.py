@@ -102,10 +102,15 @@ def run(args, device, data):
             # Loop over the dataloader to sample the computation dependency
             # graph as a list of blocks.
             step_time = []
+            if args.breakdown:
+                dist.barrier()
+                torch.cuda.synchronize()
             tic = time.time()
             tic_step = time.time()
             for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
-                torch.cuda.synchronize()
+                if args.breakdown:
+                    dist.barrier()
+                    torch.cuda.synchronize()
                 sample_time += time.time() - tic_step
 
                 load_begin = time.time()
@@ -117,24 +122,32 @@ def run(args, device, data):
                 blocks = [block.to(device) for block in blocks]
                 batch_inputs = batch_inputs.to(device)
                 batch_labels = batch_labels.to(device)
-                torch.cuda.synchronize()
+                if args.breakdown:
+                    dist.barrier()
+                    torch.cuda.synchronize()
                 load_time += time.time() - load_begin
 
                 forward_start = time.time()
                 batch_pred = model(blocks, batch_inputs)
                 loss = loss_fcn(batch_pred, batch_labels)
-                torch.cuda.synchronize()
+                if args.breakdown:
+                    dist.barrier()
+                    torch.cuda.synchronize()
                 forward_time += time.time() - forward_start
 
                 backward_begin = time.time()
                 optimizer.zero_grad()
                 loss.backward()
-                torch.cuda.synchronize()
+                if args.breakdown:
+                    dist.barrier()
+                    torch.cuda.synchronize()
                 backward_time += time.time() - backward_begin
 
                 update_start = time.time()
                 optimizer.step()
-                torch.cuda.synchronize()
+                if args.breakdown:
+                    dist.barrier()
+                    torch.cuda.synchronize()
                 update_time += time.time() - update_start
 
                 step_t = time.time() - tic_step
@@ -382,6 +395,7 @@ if __name__ == "__main__":
         help="Pad train nid to the same length across machine, to ensure num "
         "of batches to be the same.",
     )
+    parser.add_argument("--breakdown", action="store_true")
     args = parser.parse_args()
 
     print(args)
