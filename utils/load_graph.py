@@ -1,5 +1,6 @@
 import dgl
 import torch as th
+import os
 
 
 def load_reddit(self_loop=True):
@@ -45,6 +46,32 @@ def load_ogb(name, root="dataset"):
     graph.ndata["test_mask"] = test_mask
     print("finish constructing", name)
     return graph, num_labels
+
+
+def load_friendster(root="dataset", gen_feat=True):
+    print("load friendster")
+    g = dgl.load_graphs(os.path.join(root, "graph.dgl"))[0][0]
+    print(g)
+    train_nid = th.load(os.path.join(root, "train_idx.pt"))
+    train_mask = th.zeros((g.num_nodes(), ), dtype=th.bool)
+    train_mask[train_nid] = True
+    g.ndata["train_mask"] = train_mask
+    print("finish loading friendster")
+    num_classes = 1
+    return g, num_classes
+
+
+def load_livejournal(root="dataset", gen_feat=True):
+    print("load livejournal")
+    g = dgl.load_graphs(os.path.join(root, "graph.dgl"))[0][0]
+    print(g)
+    train_nid = th.load(os.path.join(root, "train_idx.pt"))
+    train_mask = th.zeros((g.num_nodes(), ), dtype=th.bool)
+    train_mask[train_nid] = True
+    g.ndata["train_mask"] = train_mask
+    print("finish loading livejournal")
+    num_classes = 1
+    return g, num_classes
 
 
 def inductive_split(g):
