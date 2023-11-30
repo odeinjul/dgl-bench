@@ -6,4 +6,4 @@ python3 ~/workspace/dgl/tools/launch.py --workspace ~/workspace/dgl/examples/pyt
    --fan_out "5,10,15" --lr 0.001 --sparse_lr 0.01 --dropout 0.1 --batch_size_eval 50000 \
    --dgl_sparse --num_layers 3 --num_hidden 128"
 
-#hidden_dim = 1024
+#hidden_dim = 256
